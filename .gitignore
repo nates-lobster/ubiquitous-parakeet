@@ -1,0 +1,21 @@
+# Isolated Python environment and packaging artifacts
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Local runtime data and caregiver-provided information
+.local/
+*.db
+*.db-shm
+*.db-wal
+.env
+
+# Optional Piper models/audio and other generated media
+*.onnx
+*.onnx.json
+*.wav

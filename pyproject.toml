@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ubiquitous-parakeet"
+version = "0.1.0"
+description = "A privacy-conscious, locally gated ambient companion prototype."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Proprietary - prototype" }
+authors = [{ name = "Ubiquitous Parakeet contributors" }]
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+mcp = ["mcp>=1.0,<2.0"]
+hardware = ["gpiozero>=2.0"]
+
+[project.scripts]
+parakeet = "ubiquitous_parakeet.cli:main"
+parakeet-mcp = "ubiquitous_parakeet.mcp_server:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+ubiquitous_parakeet = ["templates/*.md"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
