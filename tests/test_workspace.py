@@ -13,10 +13,12 @@ class WorkspaceTests(unittest.TestCase):
             self.assertTrue((root / "SOUL.md").is_file())
             self.assertTrue((root / "LIFE_STORY.md").is_file())
             self.assertTrue((root / "TODAY_LOG.md").is_file())
+            self.assertTrue((root / "AGENTS.md").is_file())
             self.assertTrue((root / "plugins" / "hardware_mcp.py").is_file())
             self.assertTrue((root / "plugins" / "tts_piper.py").is_file())
             self.assertTrue((root / "data" / "companion.db").is_file())
             self.assertIn("LIFE_STORY.md", first["created"])
+            self.assertIn("AGENTS.md", first["created"])
 
             story = root / "LIFE_STORY.md"
             story.write_text("caregiver content\n", encoding="utf-8")

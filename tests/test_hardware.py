@@ -25,9 +25,9 @@ class HardwareTests(unittest.TestCase):
             model.write_text("Generic x86_64 laptop", encoding="utf-8")
             self.assertFalse(is_raspberry_pi(model))
 
-    def test_real_mode_requires_explicit_pin(self):
+    def test_real_gpio_mode_requires_explicit_pin(self):
         with self.assertRaisesRegex(RuntimeError, "PRESENCE_GPIO"):
-            create_presence_sensor(mode="real", gpio_pin=None)
+            create_presence_sensor(mode="real", interface="gpio", gpio_pin=None)
 
 
 if __name__ == "__main__":

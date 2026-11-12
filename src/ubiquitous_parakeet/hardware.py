@@ -1,4 +1,4 @@
-"""Hardware abstraction: safe mocks on development hosts, optional GPIO on Pi."""
+"""Hardware abstraction: safe mocks on development hosts, optional Pi sensors."""
 
 from __future__ import annotations
 
@@ -50,7 +50,7 @@ class GPIOZeroPresenceSensor:
             from gpiozero import DigitalInputDevice
         except ImportError as error:
             raise RuntimeError(
-                "Real GPIO needs the optional 'hardware' extra (pip install -e '.[hardware]')."
+                "GPIO presence needs the optional 'hardware' extra (pip install -e '.[hardware]')."
             ) from error
         self._device = DigitalInputDevice(pin, pull_up=False, active_state=active_state)
 
@@ -66,12 +66,15 @@ def create_presence_sensor(
     mode: str | None = None,
     mock_present: bool = False,
     gpio_pin: int | None = None,
+    interface: str | None = None,
     mock_output: bool = True,
 ) -> PresenceSensor:
-    """Select the HAL from PARAKEET_HARDWARE (auto/mock/real), safely by default.
+    """Select mock/GPIO/UART from environment and Pi detection.
 
-    In auto mode an identified Pi uses the configured GPIO sensor. Every other host
-    gets a mock. The Pi pin has no default: selecting hardware is an explicit setup.
+    ``auto`` uses a mock on non-Pi hosts. A detected Pi uses the configured
+    ``PARAKEET_PRESENCE_INTERFACE`` (default: ``uart``). Real hardware never
+    silently falls back to mock mode; missing configuration or I/O errors fail
+    visibly so callers can keep model invocation blocked.
     """
     selected = (mode or os.environ.get("PARAKEET_HARDWARE", "auto")).lower()
     if selected not in {"auto", "mock", "real"}:
@@ -80,14 +83,27 @@ def create_presence_sensor(
         return MockPresenceSensor(present=mock_present, output=mock_output)
     if selected == "auto" and not is_raspberry_pi():
         return MockPresenceSensor(present=mock_present, output=mock_output)
-    pin_value = gpio_pin if gpio_pin is not None else os.environ.get("PARAKEET_PRESENCE_GPIO")
-    if pin_value is None:
-        raise RuntimeError(
-            "Real GPIO was selected, but PARAKEET_PRESENCE_GPIO is unset. "
-            "Choose the sensor's digital OUT pin after wiring is confirmed."
-        )
-    try:
-        pin = int(pin_value)
-    except (TypeError, ValueError) as error:
-        raise ValueError("GPIO pin must be a numeric BCM pin") from error
-    return GPIOZeroPresenceSensor(pin)
+
+    selected_interface = (
+        interface or os.environ.get("PARAKEET_PRESENCE_INTERFACE", "uart")
+    ).lower()
+    if selected_interface == "uart":
+        from .ld2410_uart import LD2410UARTPresenceSensor
+
+        port = os.environ.get("PARAKEET_LD2410_PORT", "/dev/serial0")
+        baudrate = int(os.environ.get("PARAKEET_LD2410_BAUD", "256000"))
+        read_timeout = float(os.environ.get("PARAKEET_LD2410_TIMEOUT", "1.0"))
+        return LD2410UARTPresenceSensor(port, baudrate=baudrate, read_timeout=read_timeout)
+    if selected_interface == "gpio":
+        pin_value = gpio_pin if gpio_pin is not None else os.environ.get("PARAKEET_PRESENCE_GPIO")
+        if pin_value is None:
+            raise RuntimeError(
+                "GPIO presence selected, but PARAKEET_PRESENCE_GPIO is unset. "
+                "Choose the sensor's digital OUT pin after wiring is confirmed."
+            )
+        try:
+            pin = int(pin_value)
+        except (TypeError, ValueError) as error:
+            raise ValueError("GPIO pin must be a numeric BCM pin") from error
+        return GPIOZeroPresenceSensor(pin)
+    raise ValueError("presence interface must be 'uart' or 'gpio'")

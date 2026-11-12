@@ -1,0 +1,43 @@
+name: ubiquitous-parakeet
+version: 0.1.0
+description: Local presence and cooldown gate for the Memory-Buddy prototype.
+provides_hooks:
+  - pre_llm_call
+config_schema:
+  command:
+    type: str
+    default: parakeet
+    description: Absolute path to the installed parakeet CLI executable.
+  workspace:
+    type: str
+    default: ~/.hermes/workspaces/alzheimers_buddy
+    description: Private local workspace containing data/companion.db.
+  hardware_mode:
+    type: str
+    choices: [auto, mock, real]
+    default: auto
+    description: Use mock on the laptop, or real hardware on the Raspberry Pi.
+  trigger_marker:
+    type: str
+    default: "[PARAKEET:PROACTIVE]"
+    description: Trusted scheduler prefix marking a proactive check-in; unmarked turns are reactive.
+  mock_present:
+    type: bool
+    default: false
+    description: Explicit test-only simulated presence; keep false for deployment.
+  uart_port:
+    type: str
+    default: /dev/serial0
+    description: Linux serial device connected to the radar UART.
+  uart_baud:
+    type: int
+    default: 256000
+    description: LD2410 UART baud rate (usual factory default).
+  sensor_timeout:
+    type: float
+    default: 1.0
+    description: Maximum wait for one complete sensor report.
+  timeout_seconds:
+    type: int
+    default: 3
+    description: Maximum wait for the local gate command; timeout blocks inference.

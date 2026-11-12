@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from ubiquitous_parakeet.database import record_interaction
-from ubiquitous_parakeet.gate import check_eligibility
+from ubiquitous_parakeet.gate import check_eligibility, reserve_proactive_if_eligible
 from ubiquitous_parakeet.orchestrator import invoke_if_eligible
 
 
@@ -50,6 +50,19 @@ class GateTests(unittest.TestCase):
             self.db, trigger_type="proactive", present=True, now=self.now
         )
         self.assertTrue(decision.allowed)
+
+    def test_proactive_reservation_starts_cooldown_once(self):
+        first = reserve_proactive_if_eligible(
+            self.db, present=True, now=self.now
+        )
+        self.assertTrue(first.allowed)
+        self.assertTrue(first.reserved)
+        second = reserve_proactive_if_eligible(
+            self.db, present=True, now=self.now + timedelta(seconds=1)
+        )
+        self.assertFalse(second.allowed)
+        self.assertEqual(second.reason, "cooldown")
+        self.assertEqual(second.cooldown_remaining_seconds, 44 * 60 + 59)
 
     def test_denied_invocation_never_runs_agent_callback(self):
         called = False

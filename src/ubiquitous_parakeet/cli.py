@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 
 from .database import initialize_database
-from .gate import check_eligibility
+from .gate import check_eligibility, reserve_proactive_if_eligible
 from .hardware import create_presence_sensor
 from .workspace import initialize_workspace
 
@@ -36,6 +36,7 @@ def _build_parser() -> argparse.ArgumentParser:
     hardware.add_argument("--hardware-mode", choices=("auto", "mock", "real"), default=None)
     hardware.add_argument("--mock-present", action="store_true", help="simulate presence in mock mode")
     hardware.add_argument("--gpio-pin", type=int, help="BCM pin connected to a sensor's digital OUT")
+    hardware.add_argument("--sensor-interface", choices=("uart", "gpio"), default=None)
 
     gate = commands.add_parser("gate", help="evaluate local call eligibility; no model is called")
     _workspace_arg(gate)
@@ -47,7 +48,12 @@ def _build_parser() -> argparse.ArgumentParser:
     gate.add_argument("--hardware-mode", choices=("auto", "mock", "real"), default=None)
     gate.add_argument("--mock-present", action="store_true", help="simulate presence in mock mode")
     gate.add_argument("--gpio-pin", type=int, help="BCM pin connected to a sensor's digital OUT")
+    gate.add_argument("--sensor-interface", choices=("uart", "gpio"), default=None)
     gate.add_argument("--cooldown-minutes", type=int, default=45)
+    gate.add_argument(
+        "--reserve-proactive", action="store_true",
+        help="atomically reserve this proactive attempt before model invocation",
+    )
 
     return parser
 
@@ -70,6 +76,7 @@ def main(argv: list[str] | None = None) -> int:
             mode=args.hardware_mode,
             mock_present=args.mock_present,
             gpio_pin=args.gpio_pin,
+            interface=args.sensor_interface,
         )
         try:
             print(json.dumps({"backend": sensor.backend, "present": sensor.is_present()}))
@@ -88,17 +95,27 @@ def main(argv: list[str] | None = None) -> int:
                 mode=args.hardware_mode,
                 mock_present=args.mock_present,
                 gpio_pin=args.gpio_pin,
+                interface=args.sensor_interface,
             )
             try:
                 present = sensor.is_present()
             finally:
                 sensor.close()
-        decision = check_eligibility(
-            database,
-            trigger_type=args.trigger,
-            present=present,
-            cooldown_minutes=args.cooldown_minutes,
-        )
+        if args.reserve_proactive:
+            if args.trigger != "proactive":
+                raise SystemExit("--reserve-proactive can only be used with --trigger proactive")
+            decision = reserve_proactive_if_eligible(
+                database,
+                present=present,
+                cooldown_minutes=args.cooldown_minutes,
+            )
+        else:
+            decision = check_eligibility(
+                database,
+                trigger_type=args.trigger,
+                present=present,
+                cooldown_minutes=args.cooldown_minutes,
+            )
         print(json.dumps(decision.to_dict(), indent=2))
         return 0 if decision.allowed else 2
 

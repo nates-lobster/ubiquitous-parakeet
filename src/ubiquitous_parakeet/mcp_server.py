@@ -26,6 +26,7 @@ def main() -> None:
     parser.add_argument("--hardware-mode", choices=("auto", "mock", "real"), default=None)
     parser.add_argument("--mock-present", action="store_true", help="simulate presence in mock mode")
     parser.add_argument("--gpio-pin", type=int, default=None)
+    parser.add_argument("--sensor-interface", choices=("uart", "gpio"), default=None)
     args = parser.parse_args()
 
     workspace = Path(args.workspace).expanduser().resolve()
@@ -35,6 +36,7 @@ def main() -> None:
         mode=args.hardware_mode,
         mock_present=args.mock_present,
         gpio_pin=args.gpio_pin,
+        interface=args.sensor_interface,
     )
     server = FastMCP("ubiquitous-parakeet")
 
@@ -45,7 +47,11 @@ def main() -> None:
 
     @server.tool()
     def check_in_eligibility(trigger_type: str) -> dict[str, object]:
-        """Apply local presence and cooldown rules; does not invoke any model."""
+        """Diagnostic eligibility query only; never authorizes or invokes a model.
+
+        The Hermes pre-inference hook has already reserved an admitted proactive
+        turn, so do not use this tool to re-authorize the current turn.
+        """
         present = sensor.is_present()
         return check_eligibility(
             database, trigger_type=trigger_type, present=present

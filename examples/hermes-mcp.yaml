@@ -1,0 +1,15 @@
+# Merge this entry into $HERMES_HOME/config.yaml under its existing mcp_servers: key.
+# Replace paths/user before use; never commit private lifecycle data or credentials.
+mcp_servers:
+  ubiquitous-parakeet:
+    command: "/absolute/path/to/ubiquitous-parakeet/.venv/bin/parakeet-mcp"
+    args: ["--workspace", "/home/youruser/.hermes/workspaces/alzheimers_buddy"]
+    env:
+      PARAKEET_HARDWARE: "real"
+      PARAKEET_PRESENCE_INTERFACE: "uart"
+      PARAKEET_LD2410_PORT: "/dev/serial0"
+      PARAKEET_LD2410_BAUD: "256000"
+      PARAKEET_LD2410_TIMEOUT: "1.0"
+    timeout: 10
+    connect_timeout: 5
+    supports_parallel_tool_calls: false

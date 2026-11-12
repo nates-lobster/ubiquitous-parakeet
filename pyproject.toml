@@ -15,7 +15,7 @@ dependencies = []
 [project.optional-dependencies]
 dev = ["pytest>=7"]
 mcp = ["mcp>=1.0,<2.0"]
-hardware = ["gpiozero>=2.0"]
+hardware = ["gpiozero>=2.0", "pyserial>=3.5,<4"]
 
 [project.scripts]
 parakeet = "ubiquitous_parakeet.cli:main"

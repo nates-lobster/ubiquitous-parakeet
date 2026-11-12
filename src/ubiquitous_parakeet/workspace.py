@@ -16,7 +16,7 @@ def initialize_workspace(workspace_path: str | Path) -> dict[str, object]:
     (root / "data").mkdir(parents=True, exist_ok=True)
     (root / "plugins").mkdir(parents=True, exist_ok=True)
     created: list[str] = []
-    for name in ("SOUL.md", "LIFE_STORY.md", "TODAY_LOG.md"):
+    for name in ("SOUL.md", "LIFE_STORY.md", "TODAY_LOG.md", "AGENTS.md"):
         target = root / name
         if not target.exists():
             shutil.copyfile(TEMPLATE_DIR / name, target)
