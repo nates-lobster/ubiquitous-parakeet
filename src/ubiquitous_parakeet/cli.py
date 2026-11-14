@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 from pathlib import Path
 import sys
@@ -69,11 +70,41 @@ def _build_parser() -> argparse.ArgumentParser:
     audio_test.add_argument("--sample-rate", type=int, help="override the input device's default sample rate")
     audio_test.add_argument("--no-playback", action="store_true", help="test capture only")
 
+    voice = commands.add_parser("voice", help="exercise the provider-neutral voice pipeline")
+    voice_commands = voice.add_subparsers(dest="voice_command", required=True)
+    voice_demo = voice_commands.add_parser(
+        "demo", help="run the complete voice flow using deterministic fake providers"
+    )
+    voice_demo.add_argument(
+        "--pause-seconds", type=float, default=12.0,
+        help="simulated thinking pause to pass through the turn detector (0.08–60)",
+    )
+
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
+    if args.command == "voice":
+        try:
+            from .voice_demo import run_demo
+
+            result, transcriber, output = asyncio.run(
+                run_demo(pause_seconds=args.pause_seconds)
+            )
+            print("Simulated voice pipeline completed; no microphone, network, or real speaker used.")
+            print(f"Heard: {result.transcript}")
+            print(f"Assistant: {result.response}")
+            print(
+                f"Mock STT received {transcriber.frames_received} audio frames, including "
+                f"{transcriber.silence_received} silence frames ({args.pause_seconds:g}s simulated)."
+            )
+            print(f"Fake TTS output exercised: {len(output.played)} clip(s).")
+            return 0
+        except (RuntimeError, ValueError) as error:
+            print(f"Voice demo error: {error}", file=sys.stderr)
+            return 2
+
     if args.command == "audio":
         try:
             if args.audio_command == "devices":

@@ -89,7 +89,13 @@ sudo apt install libportaudio2
 .venv/bin/parakeet audio test --input-device "USB" --output-device "Headphones"
 ```
 
-Device discovery and this smoke test are local-only. They do not yet start wakeword detection, VAD, cloud STT, Hermes, or TTS-provider synthesis. The next audio layer should retain the same device abstraction while adding those provider adapters. Piper remains separately opt-in: install Piper and obtain a model through your preferred source; the existing adapter neither downloads nor plays anything unless explicitly called. Models/audio are ignored by Git.
+Device discovery and this smoke test are local-only. The provider-neutral voice orchestrator now also has a full simulated turn to check wakeword → VAD onset → STT turn completion → assistant → TTS → playback contracts without a microphone, speaker, credentials, or network:
+
+```bash
+.venv/bin/parakeet voice demo --pause-seconds 12
+```
+
+The demo fast-forwards the simulated pause; it does not wait 12 real seconds. Once VAD observes speech, it passes subsequent silent frames through to the transcription adapter, leaving turn-ending to that adapter. The real openWakeWord, Silero, Flux, Hermes, and TTS adapters are the next integration step; the current `voice demo` uses fakes only. Piper remains separately opt-in: install Piper and obtain a model through your preferred source; the existing adapter neither downloads nor plays anything unless explicitly called. Models/audio are ignored by Git.
 
 ## Laptop-to-Pi workflow
 
