@@ -70,7 +70,26 @@ export PARAKEET_PRESENCE_GPIO='<confirmed BCM pin>'
 parakeet hardware-status --hardware-mode real --sensor-interface gpio
 ```
 
-Piper is also opt-in: install Piper separately, obtain a model through your preferred source, and configure its model path yourself. Models/audio are ignored by Git. The adapter does not download or play anything unless explicitly called.
+## Audio devices (first peripheral milestone)
+
+Audio device discovery/capture/playback is runtime-selected rather than tied to a particular microphone, speaker, USB port, jack, or ALSA card number. The default behavior follows the OS's current input/output devices. You can explicitly select a discovered device by index or unique name for a test; indices can change when devices are added or removed.
+
+On Raspberry Pi OS, install PortAudio and the project's optional audio extra:
+
+```bash
+sudo apt install libportaudio2
+./scripts/dev-setup.sh --audio
+.venv/bin/parakeet audio devices
+.venv/bin/parakeet audio test
+```
+
+`audio test` records a short sample in memory and plays it back through the selected/default output. It does not save or transmit the recording. To check capture only, use `--no-playback`. If multiple devices are available and no OS default is set, select one explicitly, for example:
+
+```bash
+.venv/bin/parakeet audio test --input-device "USB" --output-device "Headphones"
+```
+
+Device discovery and this smoke test are local-only. They do not yet start wakeword detection, VAD, cloud STT, Hermes, or TTS-provider synthesis. The next audio layer should retain the same device abstraction while adding those provider adapters. Piper remains separately opt-in: install Piper and obtain a model through your preferred source; the existing adapter neither downloads nor plays anything unless explicitly called. Models/audio are ignored by Git.
 
 ## Laptop-to-Pi workflow
 

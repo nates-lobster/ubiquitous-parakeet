@@ -1,6 +1,6 @@
 name: ubiquitous-parakeet
 version: 0.1.0
-description: Local presence and cooldown gate for the Memory-Buddy prototype.
+description: Local presence and cooldown gate for the companion.
 provides_hooks:
   - pre_llm_call
 config_schema:

@@ -5,7 +5,9 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import sys
 
+from .audio_io import capture_and_playback_test, format_audio_devices, list_audio_devices
 from .database import initialize_database
 from .gate import check_eligibility, reserve_proactive_if_eligible
 from .hardware import create_presence_sensor
@@ -55,11 +57,54 @@ def _build_parser() -> argparse.ArgumentParser:
         help="atomically reserve this proactive attempt before model invocation",
     )
 
+    audio = commands.add_parser("audio", help="discover and test system audio devices")
+    audio_commands = audio.add_subparsers(dest="audio_command", required=True)
+    audio_commands.add_parser("devices", help="list discovered input/output devices")
+    audio_test = audio_commands.add_parser(
+        "test", help="record a short sample in memory and optionally play it back"
+    )
+    audio_test.add_argument("--duration", type=float, default=3.0, help="recording length in seconds (max 60)")
+    audio_test.add_argument("--input-device", help="device index or unique name; defaults to the OS input device")
+    audio_test.add_argument("--output-device", help="device index or unique name; defaults to the OS output device")
+    audio_test.add_argument("--sample-rate", type=int, help="override the input device's default sample rate")
+    audio_test.add_argument("--no-playback", action="store_true", help="test capture only")
+
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
+    if args.command == "audio":
+        try:
+            if args.audio_command == "devices":
+                print(format_audio_devices(list_audio_devices()))
+                return 0
+            print(
+                f"Recording for {args.duration:g} seconds; speak after the prompt. "
+                "The sample stays in memory and is not saved."
+            )
+            result = capture_and_playback_test(
+                duration_seconds=args.duration,
+                input_device=args.input_device,
+                output_device=args.output_device,
+                sample_rate=args.sample_rate,
+                playback=not args.no_playback,
+            )
+            output = (
+                f" to [{result.output_device.index}] {result.output_device.name}"
+                if result.output_device is not None
+                else " (playback skipped)"
+            )
+            print(
+                f"Audio test complete: captured {result.duration_seconds:g}s at "
+                f"{result.sample_rate} Hz from [{result.input_device.index}] "
+                f"{result.input_device.name}{output}."
+            )
+            return 0
+        except (RuntimeError, ValueError) as error:
+            print(f"Audio error: {error}", file=sys.stderr)
+            return 2
+
     if args.command == "init":
         result = initialize_workspace(args.workspace)
         print(json.dumps(result, indent=2))
