@@ -1,3 +1,4 @@
+from contextlib import closing
 import sqlite3
 import tempfile
 import unittest
@@ -23,7 +24,7 @@ class DatabaseTests(unittest.TestCase):
     def test_schema_is_idempotent_and_has_expected_columns(self):
         initialize_database(self.db)
         initialize_database(self.db)
-        with sqlite3.connect(self.db) as connection:
+        with closing(sqlite3.connect(self.db)) as connection, connection:
             interaction_columns = {row[1] for row in connection.execute("PRAGMA table_info(interactions)")}
             vital_columns = {row[1] for row in connection.execute("PRAGMA table_info(vitals_log)")}
             version = connection.execute("PRAGMA user_version").fetchone()[0]
@@ -36,7 +37,7 @@ class DatabaseTests(unittest.TestCase):
         record_interaction(self.db, trigger_type="proactive", topic_category="music", timestamp=timestamp)
         record_vital(self.db, metric_type="hydration_prompt", value="offered", timestamp=timestamp)
         self.assertEqual(latest_proactive_timestamp(self.db), "2026-01-02T03:04:00+00:00")
-        with sqlite3.connect(self.db) as connection:
+        with closing(sqlite3.connect(self.db)) as connection, connection:
             value = connection.execute("SELECT value FROM vitals_log").fetchone()[0]
         self.assertEqual(value, "offered")
 

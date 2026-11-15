@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import closing
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -102,7 +103,7 @@ def reserve_proactive_if_eligible(
 
     path = initialize_database(database_path)
     current = _utc_now(now)
-    with connect(path) as connection:
+    with closing(connect(path)) as connection, connection:
         connection.execute("BEGIN IMMEDIATE")
         row = connection.execute(
             "SELECT timestamp FROM interactions WHERE trigger_type = 'proactive' "

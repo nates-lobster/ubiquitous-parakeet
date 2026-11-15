@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import closing
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -29,7 +30,7 @@ def initialize_database(database_path: str | Path) -> Path:
     """Create or upgrade the local database without replacing existing data."""
     path = Path(database_path).expanduser()
     path.parent.mkdir(parents=True, exist_ok=True)
-    with connect(path) as connection:
+    with closing(connect(path)) as connection, connection:
         connection.executescript(
             """
             CREATE TABLE IF NOT EXISTS interactions (
@@ -64,7 +65,7 @@ def latest_proactive_timestamp(database_path: str | Path) -> str | None:
     path = Path(database_path).expanduser()
     if not path.exists():
         return None
-    with connect(path) as connection:
+    with closing(connect(path)) as connection, connection:
         row = connection.execute(
             "SELECT timestamp FROM interactions "
             "WHERE trigger_type = 'proactive' ORDER BY timestamp DESC, id DESC LIMIT 1"
@@ -85,7 +86,7 @@ def record_interaction(
     if not topic_category.strip():
         raise ValueError("topic_category must not be empty")
     path = initialize_database(database_path)
-    with connect(path) as connection:
+    with closing(connect(path)) as connection, connection:
         cursor = connection.execute(
             "INSERT INTO interactions(timestamp, trigger_type, topic_category, engagement_score) "
             "VALUES (?, ?, ?, ?)",
@@ -104,7 +105,7 @@ def record_vital(
     if not metric_type.strip():
         raise ValueError("metric_type must not be empty")
     path = initialize_database(database_path)
-    with connect(path) as connection:
+    with closing(connect(path)) as connection, connection:
         cursor = connection.execute(
             "INSERT INTO vitals_log(timestamp, metric_type, value) VALUES (?, ?, ?)",
             (utc_timestamp(timestamp), metric_type.strip(), str(value)),
