@@ -23,6 +23,24 @@ class CliTests(unittest.TestCase):
         self.assertIn("USB headphones", output.getvalue())
         self.assertIn("system default", output.getvalue())
 
+    def test_reactive_gate_allows_without_opening_presence_sensor(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            output = io.StringIO()
+            with patch(
+                "ubiquitous_parakeet.cli.create_presence_sensor",
+                side_effect=AssertionError("reactive turns must not read the detector"),
+            ):
+                with contextlib.redirect_stdout(output):
+                    status = main([
+                        "gate", "--workspace", temporary,
+                        "--trigger", "reactive", "--presence", "auto",
+                        "--hardware-mode", "real",
+                    ])
+        self.assertEqual(status, 0)
+        decision = json.loads(output.getvalue())
+        self.assertTrue(decision["allowed"])
+        self.assertEqual(decision["reason"], "eligible_reactive")
+
     def test_init_and_explicit_absence_gate(self):
         with tempfile.TemporaryDirectory() as temporary:
             output = io.StringIO()

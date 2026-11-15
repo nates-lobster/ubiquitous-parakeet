@@ -18,12 +18,14 @@ class GateTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
-    def test_absence_denies_proactive_and_reactive(self):
-        for trigger in ("proactive", "reactive"):
-            with self.subTest(trigger=trigger):
-                decision = check_eligibility(self.db, trigger_type=trigger, present=False)
-                self.assertFalse(decision.allowed)
-                self.assertEqual(decision.reason, "no_presence")
+    def test_absence_denies_proactive_but_reactive_voice_bypasses_presence(self):
+        proactive = check_eligibility(self.db, trigger_type="proactive", present=False)
+        self.assertFalse(proactive.allowed)
+        self.assertEqual(proactive.reason, "no_presence")
+
+        reactive = check_eligibility(self.db, trigger_type="reactive", present=False)
+        self.assertTrue(reactive.allowed)
+        self.assertEqual(reactive.reason, "eligible_reactive")
 
     def test_cooldown_blocks_until_45_minutes_and_reactive_bypasses_it(self):
         record_interaction(

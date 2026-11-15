@@ -284,6 +284,10 @@ class HermesCliAssistant:
         self.history: deque[tuple[str, str]] = deque(maxlen=max_history_turns)
         self.timeout_seconds = timeout_seconds
 
+    def reset_conversation(self) -> None:
+        """Discard in-memory context when the voice session has ended."""
+        self.history.clear()
+
     async def respond(self, text: str) -> str:
         lines = [
             "Respond as the configured companion persona. Keep the answer concise, natural to speak aloud, and avoid markdown formatting.",

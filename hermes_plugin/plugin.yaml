@@ -16,7 +16,7 @@ config_schema:
     type: str
     choices: [auto, mock, real]
     default: auto
-    description: Use mock on the laptop, or real hardware on the Raspberry Pi.
+    description: Presence backend for proactive checks; reactive user turns bypass presence sensing.
   trigger_marker:
     type: str
     default: "[PARAKEET:PROACTIVE]"
@@ -24,7 +24,7 @@ config_schema:
   mock_present:
     type: bool
     default: false
-    description: Explicit test-only simulated presence; keep false for deployment.
+    description: Test-only simulated presence for proactive checks; keep false for deployment.
   uart_port:
     type: str
     default: /dev/serial0

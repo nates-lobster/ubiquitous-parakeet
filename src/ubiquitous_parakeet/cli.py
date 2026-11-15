@@ -88,6 +88,10 @@ def _build_parser() -> argparse.ArgumentParser:
     voice_run.add_argument("--tts-provider", choices=("piper", "cartesia", "google"))
     voice_run.add_argument("--eot-threshold", type=float, help="Flux end-of-turn confidence (default 0.85)")
     voice_run.add_argument("--eot-timeout-ms", type=int, help="Flux silence timeout; default 30000 ms")
+    voice_run.add_argument(
+        "--conversation-idle-timeout-seconds", type=float,
+        help="seconds of no speech before an active conversation ends (default 120)",
+    )
 
     return parser
 
@@ -97,6 +101,7 @@ def _live_voice_status():
     labels = {
         "waiting_for_wakeword": "Listening for wake word",
         "waiting_for_speech": "Wake word heard; waiting for speech",
+        "waiting_for_next_turn": "Conversation active; listening for your next turn",
         "transcribing": "Listening for the end of your turn",
         "thinking": "Thinking with Hermes",
         "preparing_audio": "Preparing spoken reply",
@@ -176,6 +181,7 @@ def main(argv: list[str] | None = None) -> int:
                 tts_provider=args.tts_provider,
                 eot_threshold=args.eot_threshold,
                 eot_timeout_ms=args.eot_timeout_ms,
+                conversation_idle_timeout_seconds=args.conversation_idle_timeout_seconds,
             )
             asyncio.run(
                 run_voice_service(settings, status_callback=_live_voice_status())
@@ -245,7 +251,12 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "gate":
         database = initialize_database(Path(args.workspace).expanduser() / "data" / "companion.db")
-        if args.presence == "present":
+        if args.reserve_proactive and args.trigger != "proactive":
+            raise SystemExit("--reserve-proactive can only be used with --trigger proactive")
+        if args.trigger == "reactive" and not args.reserve_proactive:
+            # User-initiated turns are authoritative; don't even open a sensor.
+            present = False
+        elif args.presence == "present":
             present = True
         elif args.presence == "absent":
             present = False
@@ -261,8 +272,6 @@ def main(argv: list[str] | None = None) -> int:
             finally:
                 sensor.close()
         if args.reserve_proactive:
-            if args.trigger != "proactive":
-                raise SystemExit("--reserve-proactive can only be used with --trigger proactive")
             decision = reserve_proactive_if_eligible(
                 database,
                 present=present,

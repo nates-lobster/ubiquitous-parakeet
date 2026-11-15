@@ -1,4 +1,4 @@
-"""Provider-neutral orchestration for one wakeword-activated voice turn.
+"""Provider-neutral orchestration for a wakeword-activated conversation.
 
 Audio frames passed into this layer must already be mono, signed 16-bit PCM at
 ``sample_rate``. Hardware capture, normalization, wakeword, VAD, transcription,
@@ -11,6 +11,7 @@ import asyncio
 from collections import deque
 from dataclasses import dataclass
 import inspect
+import re
 import time
 from typing import AsyncIterator, Awaitable, Callable, Protocol, TypeVar
 
@@ -96,6 +97,27 @@ class VoiceTurnResult:
     audio: PcmAudio
     speech_audio_frames: int
     silence_audio_frames: int
+    conversation_ended: bool = False
+
+
+def is_conversation_end(text: str) -> bool:
+    """Recognize a small set of explicit user sign-offs without another model call."""
+    normalized = text.lower().replace("’", "'")
+    normalized = re.sub(r"[^a-z0-9' ]", " ", normalized)
+    normalized = " ".join(normalized.split())
+    phrases = (
+        "goodbye",
+        "good bye",
+        "bye",
+        "that's all",
+        "thats all",
+        "i'm done",
+        "im done",
+        "i am done",
+        "stop listening",
+        "end conversation",
+    )
+    return any(normalized == phrase or normalized.endswith(" " + phrase) for phrase in phrases)
 
 
 class VoiceLoop:
@@ -213,39 +235,41 @@ class VoiceLoop:
         *,
         wake_timeout_seconds: float | None = None,
         speech_start_timeout_seconds: float = 30.0,
+        require_wakeword: bool = True,
     ) -> VoiceTurnResult:
-        """Wait for one wakeword and one patient-paced utterance, then answer it."""
+        """Process one utterance; skip wakeword gating during an active conversation."""
         if wake_timeout_seconds is not None and wake_timeout_seconds <= 0:
             raise ValueError("wake_timeout_seconds must be positive or None")
         if speech_start_timeout_seconds <= 0:
             raise ValueError("speech_start_timeout_seconds must be positive")
 
-        wake_deadline = (
-            time.monotonic() + wake_timeout_seconds
-            if wake_timeout_seconds is not None
-            else None
-        )
-        await self._report_status(VoiceStatus("waiting_for_wakeword"))
-        while True:
-            frame = await self._read_before_deadline(read_frame, wake_deadline, "wakeword")
-            self._validate_frame(frame)
-            if self.wakeword.detect(frame):
-                reset_wakeword = getattr(self.wakeword, "reset", None)
-                if reset_wakeword is not None:
-                    reset_wakeword()
-                break
-
-        await self._report_status(VoiceStatus("waiting_for_speech"))
+        if require_wakeword:
+            wake_deadline = (
+                time.monotonic() + wake_timeout_seconds
+                if wake_timeout_seconds is not None
+                else None
+            )
+            await self._report_status(VoiceStatus("waiting_for_wakeword"))
+            while True:
+                frame = await self._read_before_deadline(read_frame, wake_deadline, "wakeword")
+                self._validate_frame(frame)
+                if self.wakeword.detect(frame):
+                    reset_wakeword = getattr(self.wakeword, "reset", None)
+                    if reset_wakeword is not None:
+                        reset_wakeword()
+                    break
+            await self._report_status(VoiceStatus("waiting_for_speech"))
+        else:
+            await self._report_status(VoiceStatus("waiting_for_next_turn"))
         self.vad.reset()
         speech_deadline = time.monotonic() + speech_start_timeout_seconds
+        speech_phase = "speech after wakeword" if require_wakeword else "next conversational turn"
         preroll: deque[tuple[AudioFrame, bool]] = deque(
             maxlen=max(1, self.pre_roll_frames)
         )
         first_speech_frame: AudioFrame | None = None
         while first_speech_frame is None:
-            frame = await self._read_before_deadline(
-                read_frame, speech_deadline, "speech after wakeword"
-            )
+            frame = await self._read_before_deadline(read_frame, speech_deadline, speech_phase)
             self._validate_frame(frame)
             is_speech = self.vad.is_speech(frame)
             preroll.append((frame, is_speech))
@@ -306,6 +330,7 @@ class VoiceLoop:
                 audio=audio,
                 speech_audio_frames=speech_frames,
                 silence_audio_frames=silence_frames,
+                conversation_ended=is_conversation_end(transcript),
             )
         finally:
             if input_paused and self.resume_input is not None:

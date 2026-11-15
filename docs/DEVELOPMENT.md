@@ -40,11 +40,11 @@ parakeet hardware-status --hardware-mode mock --mock-present
 # Explicit presence inputs make gate tests deterministic; these never call a model.
 parakeet gate --workspace .local/workspace --trigger proactive --presence absent
 parakeet gate --workspace .local/workspace --trigger proactive --presence present
-parakeet gate --workspace .local/workspace --trigger reactive --presence present
+parakeet gate --workspace .local/workspace --trigger reactive --presence absent
 python -m unittest discover -s tests -v
 ```
 
-A denied gate exits with status 2 and prints a JSON reason. Reactive speech bypasses the proactive cooldown, but not an absent-presence result. The default cooldown is 45 minutes. The Hermes hook uses `--reserve-proactive` to atomically mark an eligible attempt before inference, so parallel scheduled triggers cannot all pass and provider failures do not immediately retrigger.
+A denied gate exits with status 2 and prints a JSON reason. Reactive, user-initiated turns bypass the presence detector and proactive cooldown; the detector is only consulted for proactive check-ins. The default cooldown is 45 minutes. The Hermes hook uses `--reserve-proactive` to atomically mark an eligible attempt before inference, so parallel scheduled triggers cannot all pass and provider failures do not immediately retrigger.
 
 ## Optional local hardware
 
@@ -127,7 +127,7 @@ Start the live loop with:
 .venv/bin/parakeet voice run
 ```
 
-You can override settings per run: `--wakeword-model`, `--input-device`, `--output-device`, `--tts-provider`, `--eot-timeout-ms`, and `--eot-threshold`. Flux defaults to a 0.85 end-of-turn threshold and a 30-second silence timeout; the timeout is configurable up to 60 seconds. VAD gates the start of the STT stream, then the full audio—including pauses—is forwarded to Flux. The terminal reports elapsed progress while Flux finishes the turn, Hermes thinks, TTS prepares the reply, and audio plays; recoverable turn failures reset the audio stream and report the error instead of silently hanging. These UI-neutral status events are also the hook for a future screen. Capture is paused while Hermes and TTS respond to avoid microphone queue overflow; barge-in during a spoken response is not implemented yet. The voice loop is continuous until Ctrl+C. No audio is written to disk by this runtime, but the post-onset audio is streamed to Deepgram for transcription/turn detection.
+You can override settings per run: `--wakeword-model`, `--input-device`, `--output-device`, `--tts-provider`, `--eot-timeout-ms`, `--eot-threshold`, and `--conversation-idle-timeout-seconds`. A wakeword is required only to start a conversation. After each reply, capture resumes and the companion listens for the next user turn without another wakeword. Say `goodbye`, `that's all`, `I'm done`, or `stop listening` to end explicitly; otherwise the session closes after 120 seconds without new speech by default. Configure `PARAKEET_CONVERSATION_IDLE_TIMEOUT_SECONDS` or the CLI option from 15 to 900 seconds. On a conversation timeout/sign-off, the next turn requires the wakeword and in-memory Hermes turn history is cleared. Flux defaults to a 0.85 end-of-turn threshold and a 30-second silence timeout; the timeout is configurable up to 60 seconds. VAD gates the start of each STT stream, then the full audio—including pauses—is forwarded to Flux. The terminal reports elapsed progress while Flux finishes the turn, Hermes thinks, TTS prepares the reply, and audio plays; recoverable turn failures reset the audio stream and report the error instead of silently hanging. These UI-neutral status events are also the hook for a future screen. Capture is paused while Hermes and TTS respond to avoid microphone queue overflow; barge-in during a spoken response is not implemented yet. The voice loop is continuous until Ctrl+C. No audio is written to disk by this runtime, but the post-onset audio is streamed to Deepgram for transcription/turn detection.
 
 **Pi-specific installation note:** openWakeWord's PyPI wheel can fail on some ARM64/Python combinations because of the optional TFLite runtime wheel. If `.[wakeword]` fails, try installing ONNX Runtime and the remaining openWakeWord runtime dependencies, then install its source without optional TFLite dependencies:
 

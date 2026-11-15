@@ -1,10 +1,21 @@
 import asyncio
+import contextlib
+import io
 import unittest
+from unittest.mock import patch
 
 from ubiquitous_parakeet.audio_io import AudioFrame
 from ubiquitous_parakeet.cli import _live_voice_status, main
-from ubiquitous_parakeet.voice import PcmAudio, VoiceLoop, VoiceStatus
+from ubiquitous_parakeet.voice import (
+    PcmAudio,
+    VoiceLoop,
+    VoiceStatus,
+    VoiceTimeout,
+    VoiceTurnResult,
+    is_conversation_end,
+)
 from ubiquitous_parakeet.voice_demo import run_demo
+from ubiquitous_parakeet.voice_runtime import VoiceSettings, run_voice_service
 
 
 class VoicePipelineTests(unittest.IsolatedAsyncioTestCase):
@@ -91,6 +102,164 @@ class VoicePauseResumeTests(unittest.IsolatedAsyncioTestCase):
             for status in statuses
         ))
         self.assertTrue(any(status.phase == "speaking" and status.complete for status in statuses))
+
+    async def test_active_conversation_skips_wakeword_and_honors_signoff(self):
+        statuses = []
+        frames = iter([AudioFrame(bytes(2560), 16000, 1, 1.0)])
+
+        async def read_frame():
+            return next(frames)
+
+        class Wake:
+            calls = 0
+
+            def detect(self, _frame):
+                self.calls += 1
+                return False
+
+        class VAD:
+            def reset(self):
+                return None
+
+            def is_speech(self, _frame):
+                return True
+
+        class STT:
+            async def transcribe_turn(self, audio_frames):
+                await anext(audio_frames)
+                return "Okay, goodbye."
+
+        class Assistant:
+            async def respond(self, _text):
+                return "Goodbye."
+
+        class TTS:
+            async def synthesize(self, _text):
+                return PcmAudio(bytes(2), 16000)
+
+        class Speaker:
+            async def play(self, _audio):
+                return None
+
+        wake = Wake()
+        pipeline = VoiceLoop(
+            wakeword=wake, vad=VAD(), transcriber=STT(), assistant=Assistant(),
+            tts=TTS(), output=Speaker(), pre_roll_frames=0,
+            status_callback=statuses.append,
+        )
+        result = await pipeline.run_one_turn(read_frame, require_wakeword=False)
+        self.assertEqual(wake.calls, 0)
+        self.assertTrue(result.conversation_ended)
+        self.assertTrue(any(status.phase == "waiting_for_next_turn" for status in statuses))
+        self.assertTrue(is_conversation_end("That's all, goodbye!"))
+        self.assertFalse(is_conversation_end("I don't want to say goodbye yet"))
+
+
+class VoiceConversationServiceTests(unittest.IsolatedAsyncioTestCase):
+    async def test_service_keeps_turns_active_until_signoff_then_requires_wakeword(self):
+        calls = []
+        reader_events = []
+
+        class Reader:
+            def start(self):
+                reader_events.append("start")
+
+            async def pause(self):
+                reader_events.append("pause")
+
+            async def resume(self):
+                reader_events.append("resume")
+
+            async def close(self):
+                reader_events.append("close")
+
+            async def read_frame(self):
+                raise AssertionError("fake loop does not consume capture frames")
+
+        class Assistant:
+            resets = 0
+
+            def reset_conversation(self):
+                self.resets += 1
+
+        class Loop:
+            assistant = Assistant()
+
+            async def run_one_turn(self, _reader, **kwargs):
+                calls.append(kwargs["require_wakeword"])
+                if len(calls) == 4:
+                    raise StopService
+                return VoiceTurnResult(
+                    "test turn", "test response", PcmAudio(bytes(2), 16000), 1, 0,
+                    conversation_ended=(len(calls) == 3),
+                )
+
+        class StopService(Exception):
+            pass
+
+        loop = Loop()
+        with patch(
+            "ubiquitous_parakeet.voice_runtime.build_voice_loop",
+            return_value=(Reader(), loop),
+        ):
+            with contextlib.redirect_stdout(io.StringIO()):
+                with self.assertRaises(StopService):
+                    await run_voice_service(VoiceSettings(wakeword_model="test"))
+
+        self.assertEqual(calls, [True, False, False, True])
+        self.assertEqual(loop.assistant.resets, 1)
+        self.assertEqual(reader_events[0], "start")
+        self.assertEqual(reader_events[-1], "close")
+
+    async def test_idle_conversation_timeout_returns_to_wakeword_mode(self):
+        calls = []
+        reset_count = []
+
+        class Reader:
+            async def pause(self):
+                return None
+
+            async def resume(self):
+                return None
+
+            async def close(self):
+                return None
+
+            def start(self):
+                return None
+
+            async def read_frame(self):
+                return AudioFrame(bytes(2560), 16000, 1, 0.0)
+
+        class Assistant:
+            def reset_conversation(self):
+                reset_count.append(True)
+
+        class StopService(Exception):
+            pass
+
+        class Loop:
+            assistant = Assistant()
+
+            async def run_one_turn(self, _reader, **kwargs):
+                calls.append(kwargs["require_wakeword"])
+                if len(calls) == 1:
+                    return VoiceTurnResult(
+                        "hello", "Hi.", PcmAudio(bytes(2), 16000), 1, 0
+                    )
+                if len(calls) == 2:
+                    raise VoiceTimeout("next conversational turn")
+                raise StopService
+
+        with patch(
+            "ubiquitous_parakeet.voice_runtime.build_voice_loop",
+            return_value=(Reader(), Loop()),
+        ):
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaises(StopService):
+                    await run_voice_service(VoiceSettings(wakeword_model="test"))
+        self.assertEqual(calls, [True, False, True])
+        self.assertEqual(reset_count, [True])
 
 
 class VoiceCliTests(unittest.TestCase):

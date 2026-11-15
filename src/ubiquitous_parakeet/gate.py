@@ -60,17 +60,18 @@ def check_eligibility(
 ) -> GateDecision:
     """Read-only presence and cooldown check; never calls a model or reserves state.
 
-    An explicit reactive user interaction bypasses the proactive cooldown, but never
-    the local presence check. An absent or unknown person is always a zero-call state.
+    Reactive user-initiated turns bypass both proactive cooldown and presence
+    sensing: the user's direct interaction is the signal to respond. Proactive
+    turns still require confirmed presence and remain subject to cooldown.
     """
     if trigger_type not in {"proactive", "reactive"}:
         raise ValueError("trigger_type must be 'proactive' or 'reactive'")
     if cooldown_minutes < 0:
         raise ValueError("cooldown_minutes must be non-negative")
-    if not present:
-        return GateDecision(False, "no_presence", trigger_type)
     if trigger_type == "reactive":
         return GateDecision(True, "eligible_reactive", trigger_type)
+    if not present:
+        return GateDecision(False, "no_presence", trigger_type)
     return _decision_for_previous(
         latest_proactive_timestamp(database_path),
         current=_utc_now(now),

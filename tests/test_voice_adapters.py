@@ -227,12 +227,21 @@ class VoiceAdapterTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(len(assistant.history), 1)
 
     def test_voice_settings_require_explicit_wakeword_and_accept_provider_switch(self):
-        with patch.dict("os.environ", {"DEEPGRAM_API_KEY": "dg-test", "PARAKEET_TTS_PROVIDER": "cartesia"}, clear=True):
+        with patch.dict(
+            "os.environ",
+            {
+                "DEEPGRAM_API_KEY": "dg-test",
+                "PARAKEET_TTS_PROVIDER": "cartesia",
+                "PARAKEET_CONVERSATION_IDLE_TIMEOUT_SECONDS": "240",
+            },
+            clear=True,
+        ):
             with self.assertRaisesRegex(ValueError, "Choose a wakeword"):
                 VoiceSettings.from_environment()
             settings = VoiceSettings.from_environment(wakeword_model="hey_jarvis")
         self.assertEqual(settings.tts_provider, "cartesia")
         self.assertEqual(settings.flux_eot_timeout_ms, 30000)
+        self.assertEqual(settings.conversation_idle_timeout_seconds, 240.0)
 
     @unittest.skipUnless(
         importlib.util.find_spec("numpy"),

@@ -32,6 +32,7 @@ class VoiceSettings:
     deepgram_api_key: str | None = None
     flux_eot_threshold: float = 0.85
     flux_eot_timeout_ms: int = 30000
+    conversation_idle_timeout_seconds: float = 120.0
     hermes_executable: str = "hermes"
 
     @classmethod
@@ -44,6 +45,7 @@ class VoiceSettings:
         tts_provider: str | None = None,
         eot_threshold: float | None = None,
         eot_timeout_ms: int | None = None,
+        conversation_idle_timeout_seconds: float | None = None,
     ) -> "VoiceSettings":
         try:
             from dotenv import load_dotenv
@@ -70,6 +72,11 @@ class VoiceSettings:
                 if eot_timeout_ms is not None
                 else int(os.environ.get("PARAKEET_FLUX_EOT_TIMEOUT_MS", "30000"))
             )
+            conversation_timeout = (
+                conversation_idle_timeout_seconds
+                if conversation_idle_timeout_seconds is not None
+                else float(os.environ.get("PARAKEET_CONVERSATION_IDLE_TIMEOUT_SECONDS", "120"))
+            )
         except ValueError as error:
             raise ValueError("Voice thresholds/timeouts must be valid numbers") from error
         if not 0.0 < threshold <= 1.0 or not 0.0 < vad_threshold <= 1.0:
@@ -78,6 +85,8 @@ class VoiceSettings:
             raise ValueError("Flux end-of-turn threshold must be between 0.5 and 1.0")
         if not 500 <= flux_timeout <= 60000:
             raise ValueError("Flux end-of-turn timeout must be between 500 and 60000 ms")
+        if not 15 <= conversation_timeout <= 900:
+            raise ValueError("Conversation idle timeout must be between 15 and 900 seconds")
 
         provider = (tts_provider or os.environ.get("PARAKEET_TTS_PROVIDER", "piper")).lower()
         if provider not in {"piper", "cartesia", "google"}:
@@ -99,6 +108,7 @@ class VoiceSettings:
             deepgram_api_key=os.environ.get("DEEPGRAM_API_KEY"),
             flux_eot_threshold=flux_threshold,
             flux_eot_timeout_ms=flux_timeout,
+            conversation_idle_timeout_seconds=conversation_timeout,
             hermes_executable=os.environ.get("HERMES_EXECUTABLE", "hermes"),
         )
 
@@ -325,16 +335,35 @@ async def run_voice_service(
 ) -> None:
     reader, loop = build_voice_loop(settings, status_callback=status_callback)
     reader.start()
+    conversation_active = False
     print("Listening locally for the configured wakeword. Press Ctrl+C to stop.")
     try:
         while True:
             try:
                 result = await loop.run_one_turn(
                     reader.read_frame,
-                    speech_start_timeout_seconds=60.0,
+                    require_wakeword=not conversation_active,
+                    speech_start_timeout_seconds=(
+                        settings.conversation_idle_timeout_seconds
+                        if conversation_active
+                        else 60.0
+                    ),
                 )
             except VoiceTimeout as error:
-                print(f"No speech after wakeword ({error}); listening again.", file=sys.stderr)
+                if conversation_active:
+                    print(
+                        f"Conversation idle for {settings.conversation_idle_timeout_seconds:g}s; "
+                        "say the wakeword to start again.",
+                        file=sys.stderr,
+                    )
+                    conversation_active = False
+                    reset = getattr(loop.assistant, "reset_conversation", None)
+                    if reset is not None:
+                        reset()
+                else:
+                    print(f"No speech after wakeword ({error}); listening again.", file=sys.stderr)
+                await reader.pause()
+                await reader.resume()
                 continue
             except (VoicePipelineError, RuntimeError, OSError, ValueError) as error:
                 print(
@@ -346,5 +375,13 @@ async def run_voice_service(
                 continue
             print(f"Heard: {result.transcript}")
             print(f"Replied: {result.response}")
+            if result.conversation_ended:
+                conversation_active = False
+                reset = getattr(loop.assistant, "reset_conversation", None)
+                if reset is not None:
+                    reset()
+                print("Conversation ended; say the wakeword when you want to talk again.", file=sys.stderr)
+            else:
+                conversation_active = True
     finally:
         await reader.close()

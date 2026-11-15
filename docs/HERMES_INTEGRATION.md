@@ -2,7 +2,7 @@
 
 This adapter targets the **NousResearch Hermes Agent** public native-plugin and MCP interfaces: `mcp_servers` in `$HERMES_HOME/config.yaml`, and a native `plugin.yaml` + `register(ctx)` Python plugin using the documented `pre_llm_call` directive hook ([MCP](https://hermes-agent.nousresearch.com/docs/user-guide/features/mcp), [hooks](https://hermes-agent.nousresearch.com/docs/user-guide/features/hooks), [plugin guide](https://hermes-agent.nousresearch.com/docs/developer-guide/plugins)). The standalone stdio server and local pre-inference gate are separate pieces: the MCP tools provide visibility/logging; the hook is what asks the deterministic gate before a Hermes turn enters inference.
 
-The Hermes plugin files are in `hermes_plugin/`. It invokes the installed `parakeet` CLI in a bounded subprocess. Eligible proactive triggers atomically reserve the cooldown in SQLite before inference, so overlapping triggers cannot all pass and a provider failure does not cause an immediate retry loop. An absent person, active proactive cooldown, sensor/CLI error, malformed gate output, or subprocess timeout returns Hermes' documented `{"action": "block", "message": "..."}` directive. No provider client or credential is used by this repo.
+The Hermes plugin files are in `hermes_plugin/`. It invokes the installed `parakeet` CLI in a bounded subprocess. Eligible proactive triggers atomically reserve the cooldown in SQLite before inference, so overlapping triggers cannot all pass and a provider failure does not cause an immediate retry loop. An absent person blocks proactive calls; sensor/CLI errors, malformed gate output, or subprocess timeouts fail closed. Direct user-initiated/reactive turns skip presence sensing and the proactive cooldown. No provider client or credential is used by this repo.
 
 ## Laptop setup and isolated Hermes home
 
@@ -73,7 +73,7 @@ parakeet gate --workspace "$HOME/.hermes/workspaces/alzheimers_buddy" \
 
 That command only prints an eligibility decision; it does not call Hermes or a cloud model. To test the Hermes hook itself, use the isolated `HERMES_HOME`, confirm the plugin is enabled, run `hermes plugins doctor ... --ci`, and inspect the gate result before testing any live provider. In the isolated plugin settings only, temporarily set `mock_present: true` to test an allowed turn, then restore it to `false`; never use this override in a deployment. Never use a caregiver's real story or an API key for this test.
 
-Scheduled/proactive turns must start their prompt with the configured marker `[PARAKEET:PROACTIVE]`. Unmarked turns are treated as user-initiated/reactive and bypass only the proactive cooldown; both kinds still require presence. Do not create a cron schedule until its timing, recipient, and caregiver consent are decided. If a check is denied, Hermes ends the turn before inference and shows the local reason.
+Scheduled/proactive turns must start their prompt with the configured marker `[PARAKEET:PROACTIVE]`. Unmarked turns are treated as user-initiated/reactive and bypass the presence detector and proactive cooldown; the wakeword/user action is the authorization to respond. Only proactive check-ins require a positive sensor reading and the cooldown check. Do not create a cron schedule until its timing, recipient, and caregiver consent are decided. If a proactive check is denied, Hermes ends the turn before inference and shows the local reason.
 
 ## Raspberry Pi UART setup (LD2410)
 
@@ -91,6 +91,6 @@ For the deployment config, change `PARAKEET_HARDWARE` / `hardware_mode` from `mo
 
 - The MCP `check_in_eligibility` tool is not a firewall; the Hermes plugin hook is the pre-inference gate.
 - Hermes documents `pre_llm_call` as a directive hook before inference, but plugin-hook exceptions/timeouts are generally isolated by Hermes. This callback catches errors, returns a block on failures, and bounds its subprocess to 3 seconds; still verify plugin loading and the specific Hermes release with `hermes plugins doctor` before deployment. Hermes may also make provider metadata probes (for example, model-list/context-length checks) before this hook; therefore this integration blocks prompt-bearing inference when denied, but does **not** guarantee zero outbound network traffic. A strict zero-network state requires putting all provider access behind a separate trusted wrapper/firewall that is not implemented here.
-- The hook runs once per user turn, not before every internal tool-loop provider request. It checks presence at turn start; it is not continuous monitoring.
+- The hook runs once per user turn, not before every internal tool-loop provider request. It checks presence at the start of proactive turns only; it is not continuous monitoring.
 - No Hermes release was specified. The code uses the currently documented stable plugin/MCP contracts, but compatibility must be checked against the actual Pi-installed Hermes release before unattended use.
 - No routine, medication schedule, caregiver recipient, model provider, or LLM credentials are configured. Those are intentionally left for a later informed decision.
