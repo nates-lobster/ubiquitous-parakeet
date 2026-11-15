@@ -59,12 +59,11 @@ class AudioFrame:
 def _sounddevice() -> Any:
     try:
         return importlib.import_module("sounddevice")
-    except ImportError as error:
+    except (ImportError, OSError) as error:
         raise RuntimeError(
-            "Audio I/O needs the optional audio extra. Install it with "
-            "'.venv/bin/python -m pip install -e \".[audio]\"'. On Raspberry Pi OS, "
-            "also install the system PortAudio library (for example, "
-            "'sudo apt install libportaudio2')."
+            "Audio I/O needs the optional audio extra and the system PortAudio library. Install "
+            "the Python package with '.venv/bin/python -m pip install -e \".[audio]\"' and, "
+            "on Raspberry Pi OS, install PortAudio (for example, 'sudo apt install libportaudio2')."
         ) from error
 
 
@@ -205,14 +204,24 @@ class AudioInputStream:
         self.sample_rate = sample_rate
         self.channels = channels
         self.block_duration_ms = block_duration_ms
+        self._queue_depth = queue_depth
         self._frames: queue.Queue[AudioFrame] = queue.Queue(maxsize=queue_depth)
         self._overflowed = threading.Event()
         self._stream: Any = None
         self.selected_device: AudioDevice | None = None
 
+    def _discard_pending_frames(self) -> None:
+        while True:
+            try:
+                self._frames.get_nowait()
+            except queue.Empty:
+                break
+        self._overflowed.clear()
+
     def start(self) -> "AudioInputStream":
         if self._stream is not None:
             return self
+        self._discard_pending_frames()
         sd = _sounddevice()
         self.selected_device = _resolve_device(
             list_audio_devices(), "input", self.device_selection
@@ -279,6 +288,7 @@ class AudioInputStream:
                 stream.stop()
             finally:
                 stream.close()
+        self._discard_pending_frames()
 
     def __enter__(self) -> "AudioInputStream":
         return self.start()

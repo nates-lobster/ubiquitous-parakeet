@@ -10,8 +10,9 @@ from __future__ import annotations
 import asyncio
 from collections import deque
 from dataclasses import dataclass
+import inspect
 import time
-from typing import AsyncIterator, Awaitable, Callable, Protocol
+from typing import AsyncIterator, Awaitable, Callable, Protocol, TypeVar
 
 from .audio_io import AudioFrame
 
@@ -64,6 +65,20 @@ class AudioOutputProvider(Protocol):
 
 
 FrameReader = Callable[[], Awaitable[AudioFrame]]
+T = TypeVar("T")
+
+
+@dataclass(frozen=True)
+class VoiceStatus:
+    """UI-neutral voice-loop progress event for a terminal or future display."""
+
+    phase: str
+    elapsed_seconds: float = 0.0
+    complete: bool = False
+    failed: bool = False
+
+
+VoiceStatusCallback = Callable[[VoiceStatus], Awaitable[None] | None]
 
 
 class VoicePipelineError(RuntimeError):
@@ -102,11 +117,16 @@ class VoiceLoop:
         output: AudioOutputProvider,
         sample_rate: int = 16000,
         pre_roll_frames: int = 4,
+        pause_input: Callable[[], Awaitable[None]] | None = None,
+        resume_input: Callable[[], Awaitable[None]] | None = None,
+        status_callback: VoiceStatusCallback | None = None,
     ) -> None:
         if sample_rate < 1:
             raise ValueError("sample_rate must be positive")
         if pre_roll_frames < 0:
             raise ValueError("pre_roll_frames cannot be negative")
+        if (pause_input is None) != (resume_input is None):
+            raise ValueError("pause_input and resume_input must be supplied together")
         self.wakeword = wakeword
         self.vad = vad
         self.transcriber = transcriber
@@ -115,6 +135,55 @@ class VoiceLoop:
         self.output = output
         self.sample_rate = sample_rate
         self.pre_roll_frames = pre_roll_frames
+        self.pause_input = pause_input
+        self.resume_input = resume_input
+        self.status_callback = status_callback
+
+    async def _report_status(self, event: VoiceStatus) -> None:
+        if self.status_callback is None:
+            return
+        try:
+            result = self.status_callback(event)
+            if inspect.isawaitable(result):
+                await result
+        except Exception:
+            # A display/status sink must never break capture or a voice response.
+            return
+
+    async def _with_progress(self, phase: str, operation: Awaitable[T]) -> T:
+        """Report elapsed progress once a second while a provider operation waits."""
+        task = asyncio.ensure_future(operation)
+        started = time.monotonic()
+        await self._report_status(VoiceStatus(phase))
+        try:
+            while not task.done():
+                await asyncio.wait({task}, timeout=1.0)
+                if not task.done():
+                    await self._report_status(
+                        VoiceStatus(phase, elapsed_seconds=time.monotonic() - started)
+                    )
+            result = await task
+        except BaseException:
+            if not task.done():
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            await self._report_status(
+                VoiceStatus(
+                    phase,
+                    elapsed_seconds=time.monotonic() - started,
+                    complete=True,
+                    failed=True,
+                )
+            )
+            raise
+        await self._report_status(
+            VoiceStatus(
+                phase,
+                elapsed_seconds=time.monotonic() - started,
+                complete=True,
+            )
+        )
+        return result
 
     def _validate_frame(self, frame: AudioFrame) -> None:
         if frame.sample_rate != self.sample_rate or frame.channels != 1:
@@ -156,12 +225,17 @@ class VoiceLoop:
             if wake_timeout_seconds is not None
             else None
         )
+        await self._report_status(VoiceStatus("waiting_for_wakeword"))
         while True:
             frame = await self._read_before_deadline(read_frame, wake_deadline, "wakeword")
             self._validate_frame(frame)
             if self.wakeword.detect(frame):
+                reset_wakeword = getattr(self.wakeword, "reset", None)
+                if reset_wakeword is not None:
+                    reset_wakeword()
                 break
 
+        await self._report_status(VoiceStatus("waiting_for_speech"))
         self.vad.reset()
         speech_deadline = time.monotonic() + speech_start_timeout_seconds
         preroll: deque[tuple[AudioFrame, bool]] = deque(
@@ -203,21 +277,36 @@ class VoiceLoop:
 
         frame_stream = active_audio()
         try:
-            transcript = (await self.transcriber.transcribe_turn(frame_stream)).strip()
+            transcript = (
+                await self._with_progress(
+                    "transcribing", self.transcriber.transcribe_turn(frame_stream)
+                )
+            ).strip()
         finally:
             await frame_stream.aclose()
 
         if not transcript:
             raise VoicePipelineError("The transcription provider returned an empty turn.")
-        response = (await self.assistant.respond(transcript)).strip()
-        if not response:
-            raise VoicePipelineError("The assistant returned an empty response.")
-        audio = await self.tts.synthesize(response)
-        await self.output.play(audio)
-        return VoiceTurnResult(
-            transcript=transcript,
-            response=response,
-            audio=audio,
-            speech_audio_frames=speech_frames,
-            silence_audio_frames=silence_frames,
-        )
+
+        input_paused = False
+        try:
+            if self.pause_input is not None:
+                await self.pause_input()
+                input_paused = True
+            response = (
+                await self._with_progress("thinking", self.assistant.respond(transcript))
+            ).strip()
+            if not response:
+                raise VoicePipelineError("The assistant returned an empty response.")
+            audio = await self._with_progress("preparing_audio", self.tts.synthesize(response))
+            await self._with_progress("speaking", self.output.play(audio))
+            return VoiceTurnResult(
+                transcript=transcript,
+                response=response,
+                audio=audio,
+                speech_audio_frames=speech_frames,
+                silence_audio_frames=silence_frames,
+            )
+        finally:
+            if input_paused and self.resume_input is not None:
+                await self.resume_input()

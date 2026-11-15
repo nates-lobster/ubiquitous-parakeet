@@ -89,13 +89,54 @@ sudo apt install libportaudio2
 .venv/bin/parakeet audio test --input-device "USB" --output-device "Headphones"
 ```
 
-Device discovery and this smoke test are local-only. The provider-neutral voice orchestrator now also has a full simulated turn to check wakeword → VAD onset → STT turn completion → assistant → TTS → playback contracts without a microphone, speaker, credentials, or network:
+Device discovery and the smoke test are local-only. The provider-neutral voice orchestrator also has a full simulated turn with fake providers:
 
 ```bash
 .venv/bin/parakeet voice demo --pause-seconds 12
 ```
 
-The demo fast-forwards the simulated pause; it does not wait 12 real seconds. Once VAD observes speech, it passes subsequent silent frames through to the transcription adapter, leaving turn-ending to that adapter. The real openWakeWord, Silero, Flux, Hermes, and TTS adapters are the next integration step; the current `voice demo` uses fakes only. Piper remains separately opt-in: install Piper and obtain a model through your preferred source; the existing adapter neither downloads nor plays anything unless explicitly called. Models/audio are ignored by Git.
+That demo fast-forwards the simulated pause; it does not wait 12 real seconds. It proves that after VAD sees speech, silence is passed onward so STT—not VAD—ends the turn. It uses no microphone, speaker, credentials, or network.
+
+### Live voice loop
+
+The real adapters are now implemented. Install PortAudio plus the project's audio/voice/model extras:
+
+```bash
+sudo apt install libportaudio2
+.venv/bin/python -m pip install -e '.[dev,mcp,hardware,audio,voice,wakeword,vad]'
+# The adapters force CPU ONNX inference; install the unused TFLite runtime only if a wheel exists.
+.venv/bin/python -m pip install --no-deps 'openwakeword>=0.6,<1'
+.venv/bin/python -m pip install 'tflite-runtime>=2.8,<3' || echo 'No TFLite wheel for this Pi/Python; ONNX inference remains enabled.'
+```
+
+The voice loop reads `~/.hermes/.env` (without overriding already-exported variables) and uses Hermes' existing `~/.hermes/config.yaml` through the installed `hermes` CLI. Set a wakeword model and choose a TTS provider. Example environment settings:
+
+```bash
+export PARAKEET_WAKEWORD_MODEL='<openWakeWord model name or local model path>'
+export DEEPGRAM_API_KEY='<Deepgram key>'
+export PARAKEET_TTS_PROVIDER='cartesia'  # piper | cartesia | google
+export CARTESIA_API_KEY='<Cartesia key>'
+export PARAKEET_CARTESIA_VOICE='<Cartesia voice ID>'
+```
+
+For Piper, set `PARAKEET_TTS_PROVIDER=piper` and `PARAKEET_PIPER_MODEL` to a model already installed locally. For Google TTS, set the provider to `google`, `GOOGLE_TTS_API_KEY`, and optionally `PARAKEET_GOOGLE_TTS_VOICE`. Input/output devices default to the OS-selected devices; optional `PARAKEET_AUDIO_INPUT` and `PARAKEET_AUDIO_OUTPUT` values select a discovered device by name or index. `PARAKEET_VAD_MODEL` can point to an alternate local Silero-compatible ONNX model. No device identity is baked into the runtime.
+
+Start the live loop with:
+
+```bash
+.venv/bin/parakeet voice run
+```
+
+You can override settings per run: `--wakeword-model`, `--input-device`, `--output-device`, `--tts-provider`, `--eot-timeout-ms`, and `--eot-threshold`. Flux defaults to a 0.85 end-of-turn threshold and a 30-second silence timeout; the timeout is configurable up to 60 seconds. VAD gates the start of the STT stream, then the full audio—including pauses—is forwarded to Flux. The terminal reports elapsed progress while Flux finishes the turn, Hermes thinks, TTS prepares the reply, and audio plays; recoverable turn failures reset the audio stream and report the error instead of silently hanging. These UI-neutral status events are also the hook for a future screen. Capture is paused while Hermes and TTS respond to avoid microphone queue overflow; barge-in during a spoken response is not implemented yet. The voice loop is continuous until Ctrl+C. No audio is written to disk by this runtime, but the post-onset audio is streamed to Deepgram for transcription/turn detection.
+
+**Pi-specific installation note:** openWakeWord's PyPI wheel can fail on some ARM64/Python combinations because of the optional TFLite runtime wheel. If `.[wakeword]` fails, try installing ONNX Runtime and the remaining openWakeWord runtime dependencies, then install its source without optional TFLite dependencies:
+
+```bash
+.venv/bin/python -m pip install onnxruntime scipy scikit-learn tqdm requests
+.venv/bin/python -m pip install --no-deps 'openwakeword @ git+https://github.com/dscripka/openWakeWord.git'
+```
+
+The first use of a built-in openWakeWord model (for example `hey_jarvis`) downloads its ONNX model and shared features from the project's GitHub release into the openWakeWord package's model directory. This requires outbound access to GitHub and a writable project virtualenv. Alternatively, configure `PARAKEET_WAKEWORD_MODEL` to a local ONNX wakeword model path. The actual wakeword phrase/model, Deepgram account, Hermes provider credentials, and chosen TTS voice still need to be configured on the Pi. Keep credentials in `~/.hermes/.env` or the process environment, never in Git. Piper remains local and opt-in; models/audio are ignored by Git.
 
 ## Laptop-to-Pi workflow
 

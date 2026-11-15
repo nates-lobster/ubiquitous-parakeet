@@ -79,30 +79,113 @@ def _build_parser() -> argparse.ArgumentParser:
         "--pause-seconds", type=float, default=12.0,
         help="simulated thinking pause to pass through the turn detector (0.08–60)",
     )
+    voice_run = voice_commands.add_parser(
+        "run", help="run the live microphone-to-Hermes voice loop"
+    )
+    voice_run.add_argument("--wakeword-model", help="openWakeWord model name or local model path")
+    voice_run.add_argument("--input-device", help="audio input device name/index; defaults to OS choice")
+    voice_run.add_argument("--output-device", help="audio output device name/index; defaults to OS choice")
+    voice_run.add_argument("--tts-provider", choices=("piper", "cartesia", "google"))
+    voice_run.add_argument("--eot-threshold", type=float, help="Flux end-of-turn confidence (default 0.85)")
+    voice_run.add_argument("--eot-timeout-ms", type=int, help="Flux silence timeout; default 30000 ms")
 
     return parser
+
+
+def _live_voice_status():
+    """Return a terminal progress sink; the same status events can drive a screen UI later."""
+    labels = {
+        "waiting_for_wakeword": "Listening for wake word",
+        "waiting_for_speech": "Wake word heard; waiting for speech",
+        "transcribing": "Listening for the end of your turn",
+        "thinking": "Thinking with Hermes",
+        "preparing_audio": "Preparing spoken reply",
+        "speaking": "Playing response",
+    }
+    is_tty = sys.stderr.isatty()
+    current_phase: str | None = None
+
+    def report(event) -> None:
+        nonlocal current_phase
+        label = labels.get(event.phase, event.phase.replace("_", " ").title())
+        if event.phase == "waiting_for_wakeword":
+            return
+        if not is_tty:
+            if event.phase == "waiting_for_speech":
+                print(f"[voice] {label}…", file=sys.stderr, flush=True)
+            elif event.complete:
+                outcome = "failed" if event.failed else "done"
+                print(
+                    f"[voice] {label}: {outcome} after {event.elapsed_seconds:.1f}s",
+                    file=sys.stderr,
+                    flush=True,
+                )
+            elif event.elapsed_seconds == 0:
+                print(f"[voice] {label}…", file=sys.stderr, flush=True)
+            return
+
+        if event.phase == "waiting_for_speech":
+            sys.stderr.write(f"\n[voice] {label}…\n")
+            sys.stderr.flush()
+            return
+        if event.phase != current_phase and current_phase is not None:
+            sys.stderr.write("\n")
+        current_phase = event.phase
+        if event.complete:
+            mark = "failed" if event.failed else "done"
+            sys.stderr.write(
+                f"\r[voice] {label}: {mark} after {event.elapsed_seconds:.1f}s\n"
+            )
+            current_phase = None
+        else:
+            spinner = "|/-\\"[int(event.elapsed_seconds) % 4]
+            sys.stderr.write(
+                f"\r{spinner} [voice] {label} — {event.elapsed_seconds:.0f}s   "
+            )
+        sys.stderr.flush()
+
+    return report
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     if args.command == "voice":
         try:
-            from .voice_demo import run_demo
+            if args.voice_command == "demo":
+                from .voice_demo import run_demo
 
-            result, transcriber, output = asyncio.run(
-                run_demo(pause_seconds=args.pause_seconds)
+                result, transcriber, output = asyncio.run(
+                    run_demo(pause_seconds=args.pause_seconds)
+                )
+                print("Simulated voice pipeline completed; no microphone, network, or real speaker used.")
+                print(f"Heard: {result.transcript}")
+                print(f"Assistant: {result.response}")
+                print(
+                    f"Mock STT received {transcriber.frames_received} audio frames, including "
+                    f"{transcriber.silence_received} silence frames ({args.pause_seconds:g}s simulated)."
+                )
+                print(f"Fake TTS output exercised: {len(output.played)} clip(s).")
+                return 0
+
+            from .voice_runtime import VoiceSettings, run_voice_service
+
+            settings = VoiceSettings.from_environment(
+                wakeword_model=args.wakeword_model,
+                input_device=args.input_device,
+                output_device=args.output_device,
+                tts_provider=args.tts_provider,
+                eot_threshold=args.eot_threshold,
+                eot_timeout_ms=args.eot_timeout_ms,
             )
-            print("Simulated voice pipeline completed; no microphone, network, or real speaker used.")
-            print(f"Heard: {result.transcript}")
-            print(f"Assistant: {result.response}")
-            print(
-                f"Mock STT received {transcriber.frames_received} audio frames, including "
-                f"{transcriber.silence_received} silence frames ({args.pause_seconds:g}s simulated)."
+            asyncio.run(
+                run_voice_service(settings, status_callback=_live_voice_status())
             )
-            print(f"Fake TTS output exercised: {len(output.played)} clip(s).")
             return 0
-        except (RuntimeError, ValueError) as error:
-            print(f"Voice demo error: {error}", file=sys.stderr)
+        except KeyboardInterrupt:
+            print("Voice loop stopped.")
+            return 130
+        except (OSError, RuntimeError, ValueError) as error:
+            print(f"Voice error: {error}", file=sys.stderr)
             return 2
 
     if args.command == "audio":

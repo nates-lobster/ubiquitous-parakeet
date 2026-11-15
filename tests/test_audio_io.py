@@ -8,6 +8,7 @@ from ubiquitous_parakeet.audio_io import (
     _resolve_device,
     AudioInputStream,
     AudioPlayback,
+    _sounddevice,
     capture_and_playback_test,
     format_audio_devices,
     list_audio_devices,
@@ -91,6 +92,12 @@ class FakeSoundDevice:
 
 
 class AudioIoTests(unittest.TestCase):
+    def test_missing_system_portaudio_is_reported_as_actionable_error(self):
+        self.import_patch.stop()
+        with patch("importlib.import_module", side_effect=OSError("PortAudio missing")):
+            with self.assertRaisesRegex(RuntimeError, "system PortAudio library"):
+                _sounddevice()
+
     def setUp(self):
         self.fake = FakeSoundDevice()
         self.import_patch = patch(
